@@ -19,52 +19,73 @@ You might also be interested in another extension I created: [Segment Anything f
 
 ## Update
 
-- `2023/07/20` [v1.1.0](https://github.com/continue-revolution/sd-webui-segment-anything/releases/tag/v1.1.0): fix gif duration, add loop number, remove auto-download, remove xformers, remove instructions on gradio UI, refactor README, add [sponsor](#sponsor) QR code.
+- `2023/07/20` [v1.1.0](https://github.com/continue-revolution/sd-webui-animatediff/releases/tag/v1.1.0): fix gif duration, add loop number, remove auto-download, remove xformers, remove instructions on gradio UI, refactor README, add [sponsor](#sponsor) QR code.
+- `2023/07/24` [v1.2.0](https://github.com/continue-revolution/sd-webui-animatediff/releases/tag/v1.2.0): fix incorrect insertion of motion modules, add option to change path to save motion modules in Settings/AnimateDiff, fix loading different motion modules.
 
 ## TODO
-- [ ] try other attention optimization (e.g. sdp)
-- [ ] fix [token issue](https://github.com/continue-revolution/sd-webui-animatediff/issues/4), [shape issue](https://github.com/continue-revolution/sd-webui-animatediff/issues/3) and [reddit](https://www.reddit.com/r/StableDiffusion/comments/152n2cr/a1111_extension_of_animatediff_is_available/?sort=new).
+- [ ] other attention optimization (e.g. sdp)
+- [ ] [token](https://github.com/continue-revolution/sd-webui-animatediff/issues/4)
+- [ ] [shape](https://github.com/continue-revolution/sd-webui-animatediff/issues/3)
+- [ ] [reddit](https://www.reddit.com/r/StableDiffusion/comments/152n2cr/a1111_extension_of_animatediff_is_available/?sort=new)
+- [ ] img2img
+- [ ] greyer sample
 
 ## FAQ
-1.  Q: Can I reproduce the result created by the original authors?
-
-    A: Unfortunately, you cannot. This is because A1111 implements generation of random tensors in a completely different way. It is not possible to produce exactly the same random tensors as the original authors without an extremely large code modification.
-2.  Q: I am using a remote server which blocks Google. What should I do?
+1.  Q: I am using a remote server which blocks Google. What should I do?
 
     A: You will have to find a way to download motion modules locally and re-upload to your server.
-3.  Q: How much VRAM do I need?
+
+2.  Q: How much VRAM do I need?
 
     A: Currently, you can run WebUI with this extension via NVIDIA 3090. I cannot guarantee any other variations of GPU. Actual VRAM usage depends on your image size and video frame number. You can try to reduce image size or video frame number to reduce VRAM usage. The default setting (displayed in [Samples/txt2img](#txt2img) section) consumes 12GB VRAM. More VRAM info will be added later.
 
-4.  Q: Can I generate a video instead a GIF?
+3.  Q: Can I generate a video instead a GIF?
 
     A: Unfortunately, you cannot. This is because a whole batch of images will pass through a transformer module, which prevents us from generating videos sequentially. We look forward to future developments of deep learning for video generation.
 
-5.  Q: Can I use SDXL to generate GIFs?
+4.  Q: Can I use SDXL to generate GIFs?
 
     A: At least at this time, you cannot. This extension essentially inject multiple motion modules into SD1.5 UNet. It does not work for other variations of SD, such as SD2.1 and SDXL. I'm not sure what will happen if you force-add motion modules to SD2.1 or SDXL. Future experiments are needed.
 
-6.  Q: Can I use this extension to do gif2gif?
+5.  Q: Can I use this extension to do gif2gif?
 
     A: Due to the 1-batch behavior of AnimateDiff, it is probably not possible to support gif2gif. However, I need to discuss this with the authors of AnimateDiff.
 
-7.  Q: Can I use xformers?
+6.  Q: Can I use xformers?
 
     A: Yes, but it will not be applied to AnimateDiff due to [a weird bug](https://github.com/continue-revolution/sd-webui-animatediff/issues/2). I will try other optimizations. Note that xformers will change the GIF you generate.
+
+7.  Q: This extension perform worse than [AnimateDiff](https://github.com/guoyww/AnimateDiff/). There seem to be no motion but only glitches. Why?
+
+    A: Because I inserted motion modules to the wrong place inside UNet output blocks. It is a very idiot typo (I wrote a 2 where it was supposed to be 3) but took me days to discover.
+
+8.  Q: How can I reproduce the result in [Samples/txt2img](#txt2img) section?
+
+    A: You must replace [create_random_tensors](https://github.com/AUTOMATIC1111/stable-diffusion-webui/blob/master/modules/processing.py#L461-L519) with 
+    ```python
+        torch.manual_seed(<seed>)
+        from einops import rearrange
+        x = rearrange(torch.randn((4, 16, 64, 64), device=shared.device), 'c f h w -> f c h w')
+    ```
+    and retry. A1111 generate random tensors in a completely different way.
+
+9. Q: [v1.2.0](https://github.com/continue-revolution/sd-webui-animatediff/releases/tag/v1.2.0) does not work for img2img. Why?
+
+    A: I don't know. I will try to figure out why very soon.
+
+10. Q: [v1.2.0](https://github.com/continue-revolution/sd-webui-animatediff/releases/tag/v1.2.0) seems to give a greyer sample compared to [AnimateDiff](https://github.com/guoyww/AnimateDiff/). Why?
+
+    A: I don't know. I will try to figure out why very soon.
 
 ## Samples
 
 ### txt2img
-![00034-860127266](https://github.com/continue-revolution/sd-webui-animatediff/assets/63914308/e69be73f-2e77-4e0f-a783-09e9319c82f3)
-
-![image](https://github.com/continue-revolution/sd-webui-animatediff/assets/63914308/8a2d94b6-cf2f-445a-9dba-99d176b62656)
+| AnimateDiff | A1111 |
+| --- | --- |
+| ![image](https://user-images.githubusercontent.com/63914308/255306527-5105afe8-d497-4ab1-b5c4-37540e9601f8.gif) | ![00023-10788741199826055168](https://github.com/continue-revolution/sd-webui-animatediff/assets/63914308/c35a952a-a127-491b-876d-cda97771f7ee) |
 
 ### img2img
-![00000-2096486817](https://github.com/continue-revolution/sd-webui-animatediff/assets/63914308/dce2df7a-c822-433b-b2de-3c7ab755eebb)
-
-![image](https://github.com/continue-revolution/sd-webui-animatediff/assets/63914308/f2c33e39-28a1-4473-a116-533f1d0fae4c)
-
-![image](https://github.com/continue-revolution/sd-webui-animatediff/assets/63914308/dc17e4d3-82d3-4e56-a409-c1e86c11a21b)
+[v1.2.0](https://github.com/continue-revolution/sd-webui-animatediff/releases/tag/v1.2.0) does not work for img2img due to some unknown reason. Will be fixed later.
 
 ## Sponsor
 You can sponsor me via WeChat or Alipay.

@@ -3,8 +3,9 @@ import gc
 import gradio as gr
 import imageio
 import torch
+from einops import rearrange
 
-from modules import scripts, images, shared
+from modules import scripts, images, shared, script_callbacks
 from modules.devices import torch_gc, device, cpu
 from modules.processing import StableDiffusionProcessing, Processed
 from scripts.logging_animatediff import logger_animatediff
@@ -12,6 +13,7 @@ from motion_module import MotionWrapper, VanillaTemporalModule
 
 
 from ldm.modules.diffusionmodules.openaimodel import TimestepBlock, TimestepEmbedSequential
+from ldm.modules.diffusionmodules.util import GroupNorm32
 from ldm.modules.attention import SpatialTransformer
 def mm_tes_forward(self, x, emb, context=None):
     for layer in self:
@@ -24,6 +26,7 @@ def mm_tes_forward(self, x, emb, context=None):
     return x
 TimestepEmbedSequential.forward = mm_tes_forward
 script_dir = scripts.basedir()
+groupnorm32_original_forward = GroupNorm32.forward
 
 
 class AnimateDiffScript(scripts.Script):
@@ -68,17 +71,24 @@ class AnimateDiffScript(scripts.Script):
         return enable, loop_number, video_length, fps, model
     
     def inject_motion_modules(self, p: StableDiffusionProcessing, model_name="mm_sd_v15.ckpt"):
-        model_path = os.path.join(script_dir, "model", model_name)
+        model_path = os.path.join(shared.opts.data.get("animatediff_model_path", os.path.join(script_dir, "model")), model_name)
         if not os.path.isfile(model_path):
             raise RuntimeError("Please download models manually.")
-        if AnimateDiffScript.motion_module is None:
+        if AnimateDiffScript.motion_module is None or AnimateDiffScript.motion_module.mm_type != model_name:
             self.logger.info(f"Loading motion module {model_name} from {model_path}")
             mm_state_dict = torch.load(model_path, map_location=device)
-            AnimateDiffScript.motion_module = MotionWrapper()
+            AnimateDiffScript.motion_module = MotionWrapper(model_name)
             missed_keys = AnimateDiffScript.motion_module.load_state_dict(mm_state_dict)
             self.logger.warn(f"Missing keys {missed_keys}")
         AnimateDiffScript.motion_module.to(device)
         unet = p.sd_model.model.diffusion_model
+        self.logger.info(f"Hacking GroupNorm32 forward function.")
+        def groupnorm32_mm_forward(self, x):
+            x = rearrange(x, '(b f) c h w -> b c f h w', b=2)
+            x = groupnorm32_original_forward(self, x)
+            x = rearrange(x, 'b c f h w -> (b f) c h w', b=2)
+            return x
+        GroupNorm32.forward = groupnorm32_mm_forward
         self.logger.info(f"Injecting motion module {model_name} into SD1.5 UNet input blocks.")
         for mm_idx, unet_idx in enumerate([1, 2, 4, 5, 7, 8, 10, 11]):
             mm_idx0, mm_idx1 = mm_idx // 2, mm_idx % 2
@@ -86,8 +96,8 @@ class AnimateDiffScript(scripts.Script):
         self.logger.info(f"Injecting motion module {model_name} into SD1.5 UNet output blocks.")
         for unet_idx in range(12):
             mm_idx0, mm_idx1 = unet_idx // 3, unet_idx % 3
-            if unet_idx % 2 == 2:
-                unet.output_blocks[unet_idx].insert(-1, AnimateDiffScript.motion_module.up_blocks[mm_idx0].motion_modules[mm_idx])
+            if unet_idx % 3 == 2 and unet_idx != 11:
+                unet.output_blocks[unet_idx].insert(-1, AnimateDiffScript.motion_module.up_blocks[mm_idx0].motion_modules[mm_idx1])
             else:
                 unet.output_blocks[unet_idx].append(AnimateDiffScript.motion_module.up_blocks[mm_idx0].motion_modules[mm_idx1])
         self.logger.info(f"Injection finished.")
@@ -100,10 +110,12 @@ class AnimateDiffScript(scripts.Script):
             unet.input_blocks[unet_idx].pop(-1)
         self.logger.info(f"Removing motion module from SD1.5 UNet output blocks.")
         for unet_idx in range(12):
-            if unet_idx % 2 == 2:
+            if unet_idx % 3 == 2 and unet_idx != 11:
                 unet.output_blocks[unet_idx].pop(-2)
             else:
                 unet.output_blocks[unet_idx].pop(-1)
+        self.logger.info(f"Restoring GroupNorm32 forward function.")
+        GroupNorm32.forward = groupnorm32_original_forward
         self.logger.info(f"Removal finished.")
         if shared.cmd_opts.lowvram:
             self.unload_motion_module()
@@ -129,3 +141,10 @@ class AnimateDiffScript(scripts.Script):
                 imageio.mimsave(video_path, video_list, duration=(1.0/fps), loop=loop_number)
 
             self.logger.info("AnimateDiff process end.")
+
+def on_ui_settings():
+    section = ('animatediff', "AnimateDiff")
+    shared.opts.add_option("animatediff_model_path", shared.OptionInfo(os.path.join(script_dir, "model"), "Path to save AnimateDiff motion modules", gr.Textbox, section=section))
+
+
+script_callbacks.on_ui_settings(on_ui_settings)
